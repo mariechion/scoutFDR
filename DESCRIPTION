@@ -18,3 +18,5 @@ Suggests:
     quantreg,
     quantregForest,
     MASS
+URL: https://github.com/mariechion/scoutFDR
+BugReports: https://github.com/mariechion/scoutFDR/issues
