@@ -1,22 +1,31 @@
 Package: scoutFDR
-Title: Simulation-Calibrated, Out-of-fold Upper-bound Thresholding for Adaptive FDR Control
+Title: Simulation-Calibrated, Out-of-Fold Upper-Bound Thresholding for Adaptive FDR Control
 Version: 0.0.0.9000
 Authors@R: 
     c(person("Marie", "Chion",
         email = "marie.chion@protonmail.com", 
         role = c("aut", "cre")),
-        person("Quentin", "Giai-Gianetto", 
+      person("Quentin", "Giai-Gianetto", 
         email = "quentin2g@yahoo.fr", 
         role = c("aut")))
-Description: What the package does (one paragraph).
+Description: Implements the scoutFDR adaptive multiple testing framework,
+    combining ECDF-based safe upper bounds with simulation-calibrated
+    conformal corrections. The package provides tools for calibration-data
+    generation, conditional quantile regression modelling, and benchmarking
+    against classical adaptive FDR estimators.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+Imports:
+    stats,
+    utils
 Suggests:
     cp4p,
     quantreg,
     quantregForest,
-    MASS
+    MASS,
+    limma,
+    multtest
 URL: https://github.com/mariechion/scoutFDR
 BugReports: https://github.com/mariechion/scoutFDR/issues
