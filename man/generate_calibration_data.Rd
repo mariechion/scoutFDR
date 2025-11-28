@@ -8,32 +8,25 @@ generate_calibration_data(
   n_sim = 2000,
   grid = NULL,
   base_pi0 = make_base_pi0("ecdf_storey_median"),
-  feature_fun = function(p) as.list(features_ecdf(p)),
+  feature_fun = function(pvals) as.list(features_ecdf(pvals)),
   seed = 1
 )
 }
 \arguments{
-\item{n_sim}{Integer, number of simulated datasets.}
+\item{n_sim}{Number of simulated datasets.}
 
-\item{grid}{Optional data frame specifying columns \code{pi0}, \code{m},
-\code{n}, and \code{target_power}. If \code{NULL}, a default grid is used.}
+\item{grid}{Optional data.frame of (pi0, m, n, target_power).}
 
-\item{base_pi0}{A function factory as returned by \code{\link[=make_base_pi0]{make_base_pi0()}},
-used to compute a scalar base estimate \code{A} from each p-vector.}
+\item{base_pi0}{Function: base pi0 estimator.}
 
-\item{feature_fun}{Function mapping a numeric p-value vector to a
-named list or vector of features. Defaults to \code{\link[=features_ecdf]{features_ecdf()}}.}
+\item{feature_fun}{Function: maps pvals -> feature list.}
 
-\item{seed}{Optional integer seed for reproducibility.}
+\item{seed}{Random seed.}
 }
 \value{
-A data frame with one row per simulation, containing columns
-\code{pi0}, \code{A}, and the chosen features. All columns are numeric,
-making this object easy to use with tidyverse tools.
+A numeric data frame, one row per simulation.
 }
 \description{
-Repeatedly simulates p-values from a t-test model over a grid of
-\code{(pi0, m, n, target_power)} settings, computes a base pi0 estimate
-and user-specified features, and returns a data frame. This can be used
-to train conditional models for pi0, e.g. via quantile regression.
+Repeatedly simulates p-values under a t-test model, computes a base
+pi0 estimate, extracts features, and returns a calibration data frame.
 }

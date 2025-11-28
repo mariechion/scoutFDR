@@ -19,13 +19,11 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports:
     stats,
-    utils
-Suggests:
+    utils,
+    matrixStats,
     cp4p,
     quantreg,
     quantregForest,
-    MASS,
-    limma,
-    multtest
+    MASS
 URL: https://github.com/mariechion/scoutFDR
 BugReports: https://github.com/mariechion/scoutFDR/issues

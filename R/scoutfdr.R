@@ -1,330 +1,222 @@
-utils::globalVariables(c("have_cp4p"))
 
-#' Base pi0 estimators and Safe-U ECDF upper bound
-#'
-#' Storey-type ECDF estimators and cp4p-based estimators that act as
-#' base features for the adaptive procedures.
-#'
-#' @param type Character string specifying the estimator type.
-#' @param Lambda Optional vector of lambda thresholds for Storey estimators.
-#' @param eps Numerical stability parameter.
-#' @param nbins,pz,censor,cp4p_fallback Arguments passed to cp4p-based estimators.
-#'
-#' @return A function that maps a numeric p-value vector to a scalar estimate of pi0.
-#' @export
-make_base_pi0 <- function(type = c("ecdf_storey_median", "ecdf_storey_weighted",
-                                   "cp4p_st.boot","cp4p_st.spline","cp4p_langaas","cp4p_jiang",
-                                   "cp4p_histo","cp4p_pounds","cp4p_abh","cp4p_slim"),
-                          Lambda = NULL, eps = 1e-8,
-                          nbins = 20, pz = 0.05, censor = FALSE,
-                          cp4p_fallback = c("storey_median","storey_weighted")) {
-  type <- match.arg(type)
-  if (grepl("^ecdf_", type)) {
-    if (is.null(Lambda)) {
-      Lambda <- if (type == "ecdf_storey_median") c(0.6, 0.7, 0.8) else c(0.6, 0.7, 0.8, 0.9)
-    }
-    if (type == "ecdf_storey_median") {
-      return(function(p) storey_median_lambda(p, Lambda, eps))
-    } else {
-      return(function(p) storey_weighted_multi(p, Lambda, eps))
-    }
-  } else {
-    method <- sub("^cp4p_", "", type)
-    return(make_cp4p_base(method, nbins, pz, censor, match.arg(cp4p_fallback), Lambda, eps))
-  }
-}
 
-storey_fixed <- function(p, lambda = 0.5, eps = 1e-8) {
-  m <- length(p)
-  clip01(sum(p > lambda) / ((1 - lambda) * m), eps)
-}
+bh_reject <- function(pvals, level) {
+  m <- length(pvals)
+  o <- order(pvals)
+  p_sorted <- pvals[o]
+  thresh <- (seq_len(m) * level) / m
 
-storey_median_lambda <- function(p, Lambda = c(0.6, 0.7, 0.8), eps = 1e-8) {
-  ests <- vapply(Lambda, function(l) storey_fixed(p, l, eps), numeric(1))
-  clip01(stats::median(ests), eps)
-}
+  k <- max(which(p_sorted <= thresh), 0)
+  rej <- logical(m)
 
-storey_weighted_multi <- function(p, Lambda = c(0.6, 0.7, 0.8, 0.9), eps = 1e-8) {
-  w <- (1 - Lambda); w <- w / sum(w)
-  ests <- vapply(Lambda, function(l) storey_fixed(p, l, eps), numeric(1))
-  clip01(sum(w * ests), eps)
-}
-
-make_cp4p_base <- function(method = c("st.boot","st.spline","langaas","jiang","histo","pounds","abh","slim"),
-                           nbins = 20, pz = 0.05, censor = FALSE,
-                           fallback = c("storey_median","storey_weighted"),
-                           Lambda = NULL, eps = 1e-8) {
-  method <- match.arg(method)
-  fallback <- match.arg(fallback)
-  if (is.null(Lambda)) {
-    Lambda <- if (fallback == "storey_median") c(0.6, 0.7, 0.8) else c(0.6, 0.7, 0.8, 0.9)
-  }
-  fb_fun <- if (fallback == "storey_median") {
-    function(p) storey_median_lambda(p, Lambda = Lambda, eps = eps)
-  } else {
-    function(p) storey_weighted_multi(p, Lambda = Lambda, eps = eps)
-  }
-  if (!isTRUE(getOption("have_cp4p", FALSE)) && !exists("have_cp4p")) {
-  warning("cp4p not installed; using ECDF fallback base estimator.")
-  return(fb_fun)
-}
-  function(p) {
-    p_in <- if (isTRUE(censor)) p else c(p, 1)
-    res <- try(cp4p::estim.pi0(p_in, pi0.method = method, nbins = nbins, pz = pz), silent = TRUE)
-    if (inherits(res, "try-error") || is.null(res$pi0) || !is.finite(res$pi0)) {
-      fb_fun(p)
-    } else {
-      clip01(as.numeric(res$pi0), eps)
-    }
-  }
-}
-
-dkw_epsilon_one_sided <- function(delta, n) {
-  sqrt(log(1 / delta) / (2 * n))
-}
-
-#' ECDF + one-sided DKW upper bound on pi0
-#'
-#' @param p Numeric vector of p-values.
-#' @param H Tail bandwidths for the grid.
-#' @param delta_total Total miscoverage budget across folds and H.
-#' @param K Number of folds.
-#'
-#' @return Scalar upper bound on pi0.
-#' @export
-safety_pi0_upper <- function(p, H = c(0.05, 0.10, 0.20), delta_total = 0.02, K = 10) {
-  n <- length(p); if (n <= 0) return(1)
-  Fhat <- stats::ecdf(p)
-  delta_per_h <- delta_total / (K * length(H))
-  vals <- sapply(H, function(h) {
-    num <- 1 - Fhat(1 - h) + dkw_epsilon_one_sided(delta_per_h, n)
-    clip01(num / h, 1e-12)
-  })
-  clip01(min(vals), 1e-12)
+  if (k > 0) rej[o[seq_len(k)]] <- TRUE
+  rej
 }
 
 
-#' Cross-fitted adaptive FDR with Safe-U denominator
+#' Adaptive FDR control (Safe-U + optional Conformal)
 #'
-#' Implements a cross-fitted adaptive FDR procedure in which each fold
-#' uses an upper bound on the null proportion \code{pi0} estimated from
-#' the complementary folds. The denominator in the BH threshold within
-#' each fold is taken to be an upper bound \code{U_use} on \code{pi0},
-#' combining:
+#' @description
+#' This implements the SCOUT-FDR procedure:
 #'
-#' \itemize{
-#'   \item an ECDF-based one-sided DKW upper bound (\code{U_safe}),
-#'   \item and, optionally, a conformal upper bound derived from a
-#'         conditional quantile regression fit (\code{U_conf}).
-#' }
+#' **Safe-U component:**  
+#' - Computes an upper bound \eqn{U_k} on \eqn{\pi_0} using the one-sided
+#'   DKW inequality on ECDF tail masses.
 #'
-#' The overall denominator is \code{U_use = min(U_safe, U_conf)}, clipped
-#' to \code{[eps, 1]}. When \code{use_conformal = FALSE}, only
-#' \code{U_safe} is used.
+#' **Optional conformal component:**  
+#' - Cross-fitted quantile regression gives an additional, conditional
+#'   upper bound on \eqn{\pi_0}, producing a sharper \eqn{U_k}.
 #'
-#' @param pvals Numeric vector of p-values.
-#' @param alpha Target FDR level (e.g. 0.1).
-#' @param K Number of folds for cross-fitting.
-#' @param base_pi0 Base estimator factory (function) used only to compute
-#'   a scalar feature \code{A} in each fold. Defaults to
-#'   \code{make_base_pi0("ecdf_storey_median")}.
-#' @param delta_ecdf Total miscoverage budget for the ECDF-based upper
-#'   bound, spread across folds and bandwidths.
-#' @param H Numeric vector of tail bandwidths for the ECDF upper bound.
-#' @param use_conformal Logical; if \code{TRUE}, use \code{cqr_fit} and
-#'   \code{cal_df} to compute an additional conformal upper bound.
-#' @param cqr_fit Fitted object from [scoutFDR::train_cqr_pi0()], or \code{NULL}
-#'   if conformal tightening is not used.
-#' @param cal_df Calibration data frame used to fit the CQR model.
-#' @param feature_names Character vector of feature names to feed into
-#'   the CQR model (must be present in \code{cal_df} and constructed by
-#'   \code{feature_fun}).
-#' @param feature_fun Function that maps a numeric vector of p-values
-#'   to a named list of features. Defaults to [scoutFDR::features_ecdf()].
-#' @param ood_params List of parameters controlling out-of-distribution
-#'   checks and conformal correction. Recognised elements:
-#'   \itemize{
-#'     \item \code{max_weight}: maximum density-ratio weight (default 2),
-#'     \item \code{maha_alpha}: significance level for Mahalanobis
-#'           outlier detection (default 0.01),
-#'     \item \code{alpha_cqr}: miscoverage level for the conformal
-#'           correction (default 0.05).
-#'   }
-#' @param folds Optional integer vector of fold labels of the same length
-#'   as \code{p}. If \code{NULL}, a random assignment into \code{K}
-#'   approximately equal folds is used.
-#' @param use_BY Logical; if \code{TRUE}, replace BH thresholds with
-#'   Benjamini--Yekutieli thresholds within each fold.
-#' @param eps Numerical stability parameter for bounding probabilities.
+#' Final bound:  
+#' - If `mode="both"` (default): \eqn{U_k = \min(U_k^{safe}, U_k^{conf})}
 #'
-#' @return A list with elements:
-#' \itemize{
-#'   \item \code{rejections}: integer vector of indices of rejected
-#'         hypotheses,
-#'   \item \code{U_fold}: numeric vector of length \code{K} giving the
-#'         per-fold \code{U_use},
-#'   \item \code{folds}: the fold assignment used,
-#'   \item \code{mode}: a list summarising whether Safe-U and conformal
-#'         tightening were used.
-#' }
+#' @param pvals Numeric p-values.
+#' @param alpha Target FDR level.
+#' @param K Number of folds (default 2).
+#' @param delta_ecdf Total miscoverage for Safe-U component.
+#' @param H Tail thresholds (default: c(0.1, 0.2, 0.3)).
+#' @param use_conformal Logical: whether to use CQR-based conformal bound.
+#' @param cqr_fit Optional CQR model (from \code{train_cqr_pi0()}).
+#' @param cal_df Calibration dataset used for CQR.
+#' @param feature_names Feature columns used in CQR.
+#' @param feature_fun Function producing feature vectors (default ECDF).
+#' @param ood_params List with:
+#'   - alpha_cqr: miscoverage level for conformal bound
+#'   - max_weight: weight clipping for density ratio
+#' @param mode One of "safe", "conformal", "both".
 #'
-#' @examples
-#' \dontrun{
-#' set.seed(123)
-#' pvals <- simulate_pvalues_ttest(m = 2000, n = 5, pi0 = 0.2, target_power = 0.35)
-#' res <- adaptive_fdr(pvals, alpha = 0.10, K = 8)
-#' length(res$rejections)
-#' mean(res$U_fold, na.rm = TRUE)
-#' }
+#' @return A list with:
+#'   - rejections: vector of rejected indices
+#'   - U_fold: per-fold \eqn{\pi_0} upper bounds
+#'   - safe_U: Safe-U bounds only
+#'   - conf_U: conformal bounds only
+#'   - fold_id: fold assignments
 #'
 #' @export
 adaptive_fdr <- function(
     pvals,
-    alpha = 0.10,
-    K = 10,
-    base_pi0 = make_base_pi0("ecdf_storey_median"),
-    delta_ecdf = 0.02,
-    H = c(0.05, 0.10, 0.20),
+    alpha        = 0.10,
+    K            = 2,
+    delta_ecdf   = 0.02,
+    H            = c(0.10, 0.20, 0.30),
     use_conformal = FALSE,
-    cqr_fit = NULL,
-    cal_df = NULL,
-    feature_names = c("A", "x9", "x10"),
-    feature_fun = function(pp) as.list(features_ecdf(pp)),
-    ood_params = list(max_weight = 2, maha_alpha = 0.01, alpha_cqr = 0.05),
-    folds = NULL,
-    use_BY = FALSE,
-    eps = 1e-8
+    cqr_fit       = NULL,
+    cal_df        = NULL,
+    feature_names = NULL,
+    feature_fun   = function(pp) as.list(features_ecdf(pp)),
+    ood_params    = list(alpha_cqr = 0.05, max_weight = 4),
+    mode          = c("both", "safe", "conformal")
 ) {
-  stopifnot(is.numeric(pvals), length(pvals) > 0)
+
+  mode <- match.arg(mode)
+  if (missing(mode) && isTRUE(use_conformal)) mode <- "both"
+
+  stopifnot(is.numeric(pvals), all(is.finite(pvals)), length(pvals) > 0)
+
   m <- length(pvals)
+  if (K < 1 || K > m) stop("K must be in [1, m].")
 
-  # Fold assignment
-  if (is.null(folds)) {
-    folds <- sample(rep(seq_len(K), length.out = m))
-  } else {
-    K <- max(folds)
+  # Random fold assignment
+  fold_id <- sample(rep(seq_len(K), length.out = m))
+
+  # ---- Safe-U helper
+  compute_safe <- function(train_p) {
+    u <- try(safety_pi0_upper(train_p, H = H, delta_total = delta_ecdf, K = K),
+             silent = TRUE)
+    if (inherits(u, "try-error") || !is.finite(u)) u <- 1
+    max(min(u, 1), 1e-8)
   }
 
-  # Precompute target features for density-ratio (including A per fold)
+  # ---- Prepare conformal features (if enabled)
+  use_conf <- (mode %in% c("conformal", "both"))
+
+  if (use_conf) {
+    if (is.null(cqr_fit) || is.null(cal_df) || is.null(feature_names)) {
+      if (mode == "conformal")
+        stop("Conformal mode requested but cqr_fit/cal_df/feature_names missing.")
+      warning("Conformal inputs missing; falling back to Safe-U only.")
+      use_conf <- FALSE
+    }
+  }
+
+  # Build target fold features
   X_target_all <- NULL
-  if (use_conformal && !is.null(cqr_fit) && !is.null(cal_df)) {
-    X_target_all <- do.call(rbind, lapply(seq_len(K), function(ell) {
-      idx_comp <- which(folds != ell)
-      feats_list <- feature_fun(pvals[idx_comp])
-      A_tmp <- base_pi0(pvals[idx_comp])
-      df <- as.data.frame(as.list(c(A = A_tmp, unlist(feats_list))))
-      df[, feature_names, drop = FALSE]
-    }))
-  }
+  if (use_conf) {
 
-  # Mahalanobis out-of-distribution check (internal)
-  mahalanobis_ood <- function(x, Xref, alpha = 0.01) {
-    mu <- colMeans(Xref, na.rm = TRUE)
-    S <- stats::cov(Xref, use = "pairwise.complete.obs")
+    feature_names <- intersect(feature_names, cqr_fit$feature_names %||% feature_names)
 
-    Sinv <- try(solve(S + diag(1e-6, nrow(S))), silent = TRUE)
-    if (inherits(Sinv, "try-error")) {
-      return(list(is_ood = TRUE))
-    }
+    X_target_all <- matrix(NA_real_, nrow = K, ncol = length(feature_names))
+    colnames(X_target_all) <- feature_names
 
-    d2 <- as.numeric(t(x - mu) %*% Sinv %*% (x - mu))
-    crit <- stats::qchisq(1 - alpha, df = ncol(Xref))
-
-    list(is_ood = (!is.finite(d2)) || (d2 > crit))
-  }
-
-  rejections <- integer(0)
-  U_fold <- rep(NA_real_, K)
-
-  for (ell in seq_len(K)) {
-    idx_comp <- which(folds != ell)
-    idx_fold <- which(folds == ell)
-    p_comp <- pvals[idx_comp]
-    p_fold <- pvals[idx_fold]
-
-    if (length(p_fold) == 0) {
-      next
-    }
-
-    # Safe-U from ECDF + DKW
-    U_safe <- safety_pi0_upper(
-      p_comp,
-      H = H,
-      delta_total = delta_ecdf,
-      K = K
-    )
-
-    # Optional conformal tightening
-    U_conf <- 1
-    if (use_conformal && !is.null(cqr_fit) && !is.null(cal_df) && !is.null(X_target_all)) {
-      feats0 <- feature_fun(p_comp)
-      A_minus <- base_pi0(p_comp)
-      x0_full <- c(A = A_minus, unlist(feats0))
-      x0 <- as.numeric(x0_full[feature_names])
-      names(x0) <- feature_names
-
-      ood <- mahalanobis_ood(
-        x = x0,
-        Xref = as.matrix(cal_df[, feature_names, drop = FALSE]),
-        alpha = ood_params$maha_alpha %||% 0.01
-      )
-
-      if (!ood$is_ood) {
-        U_conf <- cqr_upper_bound(
-          cqr_fit = cqr_fit,
-          cal_df = cal_df,
-          feature_names = feature_names,
-          x0 = x0,
-          X_target_all = X_target_all,
-          alpha = ood_params$alpha_cqr %||% 0.05,
-          weight_clip = c(0.2, ood_params$max_weight %||% 2)
-        )
-      } else {
-        U_conf <- 1
+    for (k in seq_len(K)) {
+      p_tar <- pvals[fold_id == k]
+      feats_k <- try(feature_fun(p_tar), silent = TRUE)
+      if (!inherits(feats_k, "try-error")) {
+        nm <- intersect(names(feats_k), feature_names)
+        X_target_all[k, nm] <- as.numeric(feats_k[nm])
       }
     }
 
-    # Combined bound and storage
-    U_use <- min(U_safe, U_conf)
-    U_use <- clip01(U_use, eps)
-    U_fold[ell] <- U_use
+    X_target_all <- as.data.frame(X_target_all)
+    keep <- vapply(X_target_all, function(v) all(is.finite(v)), logical(1))
+    X_target_all <- X_target_all[, keep, drop = FALSE]
+    feature_names <- colnames(X_target_all)
 
-    # BH (or BY) within fold with denominator U_use
-    ord <- order(p_fold)
-    p_sorted <- p_fold[ord]
-    k_seq <- seq_along(p_sorted)
-
-    if (!use_BY) {
-      thr <- (k_seq * alpha) / (m * U_use)
-    } else {
-      c_m <- sum(1 / (1:length(p_fold)))
-      thr <- (k_seq * alpha) / (m * U_use * c_m)
-    }
-
-    pass <- which(p_sorted <= thr)
-    if (length(pass) > 0) {
-      kmax <- max(pass)
-      tval <- p_sorted[kmax]
-      rejections <- c(rejections, idx_fold[p_fold <= tval])
-    }
-
-    if (getOption("scoutFDR.debug", FALSE)) {
-      message(
-        sprintf(
-          "Fold %d: U_safe=%.3f, U_conf=%.3f, U_use=%.3f",
-          ell, U_safe, U_conf, U_use
-        )
-      )
+    if (length(feature_names) == 0) {
+      warning("No usable features for conformal CQR; falling back to Safe-U only.")
+      use_conf <- FALSE
     }
   }
 
+  # Conformal hyperparameters
+  alpha_cqr <- ood_params$alpha_cqr %||% 0.05
+  max_weight <- max(1, as.numeric(ood_params$max_weight %||% 4))
+  weight_clip <- c(1 / max_weight, max_weight)
+
+  # Storage
+  safe_U <- numeric(K)
+  conf_U <- rep(NA_real_, K)
+  rejections <- integer(0)
+
+  # ============================================================
+  # Cross-fitted loop over folds
+  # ============================================================
+  for (k in seq_len(K)) {
+
+    idx_tar <- which(fold_id == k)
+    idx_trn <- which(fold_id != k)
+
+    p_trn <- pvals[idx_trn]
+    p_tar <- pvals[idx_tar]
+
+    # ---- Safe-U bound
+    safe_U[k] <- compute_safe(p_trn)
+
+    # ---- Conformal bound (optional)
+    if (use_conf) {
+
+      x0 <- as.numeric(X_target_all[k, feature_names, drop = TRUE])
+      names(x0) <- feature_names
+
+      if (!all(is.finite(x0))) {
+        conf_U[k] <- 1
+      } else {
+        u_conf <- try(
+          cqr_upper_bound(
+            cqr_fit      = cqr_fit,
+            cal_df       = cal_df,
+            feature_names = feature_names,
+            x0           = x0,
+            X_target_all = X_target_all,
+            alpha        = alpha_cqr,
+            weight_clip  = weight_clip
+          ),
+          silent = TRUE
+        )
+        if (inherits(u_conf, "try-error") || !is.finite(u_conf)) u_conf <- 1
+        conf_U[k] <- max(min(u_conf, 1), 1e-8)
+      }
+    }
+
+    # ---- Select which U to use
+    U_k <- switch(
+      mode,
+      safe = safe_U[k],
+      conformal = conf_U[k],
+      both = {
+        if (is.finite(conf_U[k])) min(safe_U[k], conf_U[k]) else safe_U[k]
+      }
+    )
+    if (!is.finite(U_k) || U_k <= 0) U_k <- 1
+
+    alpha_k <- alpha / U_k
+
+    # ---- Reject in this fold
+    rej_k <- bh_reject(p_tar, level = alpha_k)
+    if (any(rej_k)) {
+      rejections <- c(rejections, idx_tar[which(rej_k)])
+    }
+  }
+
+  rejections <- sort(unique(rejections))
+
   list(
-    rejections = sort(unique(rejections)),
-    U_fold = U_fold,
-    folds = folds,
-    mode = list(
-      safeU = TRUE,
-      conformal = use_conformal && !is.null(cqr_fit) && !is.null(cal_df)
+    rejections = rejections,
+    U_fold     = switch(
+      mode,
+      safe = safe_U,
+      conformal = conf_U,
+      both = pmin(safe_U, ifelse(is.finite(conf_U), conf_U, 1))
+    ),
+    safe_U   = safe_U,
+    conf_U   = conf_U,
+    fold_id  = fold_id,
+    params   = list(
+      alpha = alpha, K = K, delta_ecdf = delta_ecdf,
+      H = H, mode = mode, alpha_cqr = alpha_cqr,
+      max_weight = max_weight
     )
   )
 }
+
+

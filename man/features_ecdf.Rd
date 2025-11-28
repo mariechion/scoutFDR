@@ -9,25 +9,42 @@ features_ecdf(
   H = c(0.02, 0.05, 0.1),
   ss_lambda0 = 0.7,
   alpha_pilot = 0.1,
-  n_df = NULL
+  n_df = NULL,
+  compute_stability = TRUE
 )
 }
 \arguments{
-\item{pvals}{Numeric vector of p-values.}
+\item{pvals}{Numeric vector of p-values between 0 and 1.}
 
-\item{H}{Tail bandwidths for Storey-like ratios.}
+\item{H}{Vector of right-tail widths for computing A_h ratios.}
 
-\item{ss_lambda0}{Start of the upper-region for slope fitting.}
+\item{ss_lambda0}{Start of the tail slope regression segment (default 0.7).}
 
-\item{alpha_pilot}{Pilot level used to define BH-derived features.}
+\item{alpha_pilot}{Pilot BH level for early rejection statistics.}
 
-\item{n_df}{Optional degrees-of-freedom metadata feature.}
+\item{n_df}{Optional degrees-of-freedom metadata.}
+
+\item{compute_stability}{Whether to compute subsample-based stability features.}
 }
 \value{
-Named numeric vector of features.
+A named numeric vector of ECDF-based features.
 }
 \description{
-Computes a rich set of summary features of the empirical distribution
-of p-values. These are intended as inputs to pi0 regression or other
-meta-learning components.
+This function computes a rich collection of features derived from the
+empirical CDF (ECDF) of a vector of p-values. These features are used
+by \code{scoutFDR} to model local π₀ behavior through calibrated
+regression (CQR).
+}
+\details{
+The feature set includes:
+\itemize{
+\item Tail mass ratios (A_h) for several right-tail intervals.
+\item Storey-type estimates across multiple λ values.
+\item Slopes and curvature diagnostics for ECDF near 1.
+\item Early-tail enrichment features (F₀₀₁, F₀₁₀, F₀₅₀, etc.).
+\item Simes, KS, and Higher Criticism (HC) summaries.
+\item Log-p summaries, quantiles, uniqueness ratios.
+\item Right-tail densities, enrichment ratios, pilot BH stats.
+\item Optional stability diagnostics via subsampling.
+}
 }

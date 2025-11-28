@@ -2,7 +2,7 @@
 % Please edit documentation in R/calibration.R
 \name{cqr_upper_bound}
 \alias{cqr_upper_bound}
-\title{Conformal upper bound for pi0 using CQR and density-ratio stabilisation}
+\title{Conformal Upper Bound for \eqn{\pi_0} Using CQR Residuals}
 \usage{
 cqr_upper_bound(
   cqr_fit,
@@ -15,30 +15,54 @@ cqr_upper_bound(
 )
 }
 \arguments{
-\item{cqr_fit}{Fitted object from \code{\link[=train_cqr_pi0]{train_cqr_pi0()}}.}
+\item{cqr_fit}{A fitted object returned by
+\code{\link{train_cqr_pi0}}. Contains either a quantile regression
+model or a quantile regression forest.}
 
-\item{cal_df}{Calibration data frame containing \code{pi0} and features.}
+\item{cal_df}{Calibration data frame. Must contain a column \code{pi0}
+and all feature columns listed in \code{feature_names}.}
 
-\item{feature_names}{Character vector of feature names used in the CQR.}
+\item{feature_names}{Character vector of feature names used by the CQR model.
+Must appear as column names in both \code{cal_df} and \code{X_target_all}.}
 
-\item{x0}{Numeric feature vector at which to evaluate the upper bound.
-Must be named and at least contain \code{feature_names}.}
+\item{x0}{Numeric vector of features for a single target point (a single
+p-value distribution). Should be named and match \code{feature_names}.}
 
-\item{X_target_all}{Matrix or data frame of target feature rows,
-used for density-ratio (logistic) fitting.}
+\item{X_target_all}{Data frame containing one or more new feature vectors at
+which upper bounds may be needed. Only the rows are used to match the
+calibration sample size.}
 
-\item{alpha}{Miscoverage level for the conformal correction.}
+\item{alpha}{Miscoverage level. The returned upper bound satisfies
+(approximately) \code{P(pi0 <= U) >= 1 - alpha}.}
 
-\item{weight_clip}{Numeric length-2 vector giving lower and upper
-clipping bounds for the importance weights.}
+\item{weight_clip}{Numeric vector of length two specifying the lower and
+upper bounds used to truncate density-ratio weights. Defaults to
+\code{c(0.2, 2)} to avoid extreme weights.}
 }
 \value{
-A scalar upper bound on \code{pi0} in \eqn{[0,1]}.
+A single numeric value in \code{[0, 1]}, representing a conformal upper bound
+on \eqn{\pi_0(x0)}.
 }
 \description{
-Given a fitted conditional quantile regression model for \code{pi0},
-this function computes a conformal upper bound at a target feature
-vector \code{x0}. It uses residuals on calibration data, reweighted by
-an estimated density ratio between calibration and target feature
-distributions, with optional clipping.
+Computes a conformal upper bound on the proportion of true null hypotheses
+(\code{pi0}) at a new feature vector \code{x0}.
+
+This function implements the weighted conformal prediction method described
+in the SCOUT-FDR framework:
+\enumerate{
+\item Balance calibration and target samples.
+\item Estimate a density ratio via logistic regression to obtain importance
+weights.
+\item Compute conformal residuals from the CQR model on the calibration sample.
+\item Form a weighted empirical quantile of the residuals at level \code{1 - alpha}.
+\item Add this quantile to the CQR prediction at \code{x0} to obtain the final
+upper bound.
+}
+}
+\details{
+If logistic regression fails or yields unstable probabilities, the method
+automatically falls back to uniform weighting.
+
+If the conformal residual sample is degenerate (too few finite values), the
+function defaults to returning \code{1}.
 }

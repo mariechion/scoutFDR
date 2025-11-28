@@ -2,113 +2,79 @@
 % Please edit documentation in R/scoutfdr.R
 \name{adaptive_fdr}
 \alias{adaptive_fdr}
-\title{Cross-fitted adaptive FDR with Safe-U denominator}
+\title{Adaptive FDR control (Safe-U + optional Conformal)}
 \usage{
 adaptive_fdr(
   pvals,
   alpha = 0.1,
-  K = 10,
-  base_pi0 = make_base_pi0("ecdf_storey_median"),
+  K = 2,
   delta_ecdf = 0.02,
-  H = c(0.05, 0.1, 0.2),
+  H = c(0.1, 0.2, 0.3),
   use_conformal = FALSE,
   cqr_fit = NULL,
   cal_df = NULL,
-  feature_names = c("A", "x9", "x10"),
+  feature_names = NULL,
   feature_fun = function(pp) as.list(features_ecdf(pp)),
-  ood_params = list(max_weight = 2, maha_alpha = 0.01, alpha_cqr = 0.05),
-  folds = NULL,
-  use_BY = FALSE,
-  eps = 1e-08
+  ood_params = list(alpha_cqr = 0.05, max_weight = 4),
+  mode = c("both", "safe", "conformal")
 )
 }
 \arguments{
-\item{pvals}{Numeric vector of p-values.}
+\item{pvals}{Numeric p-values.}
 
-\item{alpha}{Target FDR level (e.g. 0.1).}
+\item{alpha}{Target FDR level.}
 
-\item{K}{Number of folds for cross-fitting.}
+\item{K}{Number of folds (default 2).}
 
-\item{base_pi0}{Base estimator factory (function) used only to compute
-a scalar feature \code{A} in each fold. Defaults to
-\code{make_base_pi0("ecdf_storey_median")}.}
+\item{delta_ecdf}{Total miscoverage for Safe-U component.}
 
-\item{delta_ecdf}{Total miscoverage budget for the ECDF-based upper
-bound, spread across folds and bandwidths.}
+\item{H}{Tail thresholds (default: c(0.1, 0.2, 0.3)).}
 
-\item{H}{Numeric vector of tail bandwidths for the ECDF upper bound.}
+\item{use_conformal}{Logical: whether to use CQR-based conformal bound.}
 
-\item{use_conformal}{Logical; if \code{TRUE}, use \code{cqr_fit} and
-\code{cal_df} to compute an additional conformal upper bound.}
+\item{cqr_fit}{Optional CQR model (from \code{train_cqr_pi0()}).}
 
-\item{cqr_fit}{Fitted object from \code{\link[=train_cqr_pi0]{train_cqr_pi0()}}, or \code{NULL}
-if conformal tightening is not used.}
+\item{cal_df}{Calibration dataset used for CQR.}
 
-\item{cal_df}{Calibration data frame used to fit the CQR model.}
+\item{feature_names}{Feature columns used in CQR.}
 
-\item{feature_names}{Character vector of feature names to feed into
-the CQR model (must be present in \code{cal_df} and constructed by
-\code{feature_fun}).}
+\item{feature_fun}{Function producing feature vectors (default ECDF).}
 
-\item{feature_fun}{Function that maps a numeric vector of p-values
-to a named list of features. Defaults to \code{\link[=features_ecdf]{features_ecdf()}}.}
-
-\item{ood_params}{List of parameters controlling out-of-distribution
-checks and conformal correction. Recognised elements:
+\item{ood_params}{List with:
 \itemize{
-\item \code{max_weight}: maximum density-ratio weight (default 2),
-\item \code{maha_alpha}: significance level for Mahalanobis
-outlier detection (default 0.01),
-\item \code{alpha_cqr}: miscoverage level for the conformal
-correction (default 0.05).
+\item alpha_cqr: miscoverage level for conformal bound
+\item max_weight: weight clipping for density ratio
 }}
 
-\item{folds}{Optional integer vector of fold labels of the same length
-as \code{p}. If \code{NULL}, a random assignment into \code{K}
-approximately equal folds is used.}
-
-\item{use_BY}{Logical; if \code{TRUE}, replace BH thresholds with
-Benjamini--Yekutieli thresholds within each fold.}
-
-\item{eps}{Numerical stability parameter for bounding probabilities.}
+\item{mode}{One of "safe", "conformal", "both".}
 }
 \value{
-A list with elements:
+A list with:
 \itemize{
-\item \code{rejections}: integer vector of indices of rejected
-hypotheses,
-\item \code{U_fold}: numeric vector of length \code{K} giving the
-per-fold \code{U_use},
-\item \code{folds}: the fold assignment used,
-\item \code{mode}: a list summarising whether Safe-U and conformal
-tightening were used.
+\item rejections: vector of rejected indices
+\item U_fold: per-fold \eqn{\pi_0} upper bounds
+\item safe_U: Safe-U bounds only
+\item conf_U: conformal bounds only
+\item fold_id: fold assignments
 }
 }
 \description{
-Implements a cross-fitted adaptive FDR procedure in which each fold
-uses an upper bound on the null proportion \code{pi0} estimated from
-the complementary folds. The denominator in the BH threshold within
-each fold is taken to be an upper bound \code{U_use} on \code{pi0},
-combining:
-}
-\details{
+This implements the SCOUT-FDR procedure:
+
+\strong{Safe-U component:}
 \itemize{
-\item an ECDF-based one-sided DKW upper bound (\code{U_safe}),
-\item and, optionally, a conformal upper bound derived from a
-conditional quantile regression fit (\code{U_conf}).
+\item Computes an upper bound \eqn{U_k} on \eqn{\pi_0} using the one-sided
+DKW inequality on ECDF tail masses.
 }
 
-The overall denominator is \code{U_use = min(U_safe, U_conf)}, clipped
-to \code{[eps, 1]}. When \code{use_conformal = FALSE}, only
-\code{U_safe} is used.
-}
-\examples{
-\dontrun{
-set.seed(123)
-pvals <- simulate_pvalues_ttest(m = 2000, n = 5, pi0 = 0.2, target_power = 0.35)
-res <- adaptive_fdr(pvals, alpha = 0.10, K = 8)
-length(res$rejections)
-mean(res$U_fold, na.rm = TRUE)
+\strong{Optional conformal component:}
+\itemize{
+\item Cross-fitted quantile regression gives an additional, conditional
+upper bound on \eqn{\pi_0}, producing a sharper \eqn{U_k}.
 }
 
+Final bound:
+\itemize{
+\item If \code{mode="both"} (default): \eqn{U_k = \min(U_k^{safe}, U_k^{conf})}
+}
 }

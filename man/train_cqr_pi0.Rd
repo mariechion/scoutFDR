@@ -2,37 +2,67 @@
 % Please edit documentation in R/calibration.R
 \name{train_cqr_pi0}
 \alias{train_cqr_pi0}
-\title{Train conditional quantile regression for pi0}
+\title{Train a conditional quantile regression model for \eqn{\pi_0}}
 \usage{
-train_cqr_pi0(cal_df, feature_names, tau = 0.8, model = c("qr", "qrf"))
+train_cqr_pi0(
+  cal_df,
+  feature_names = "auto",
+  tau = 0.8,
+  model = c("qr", "qrf")
+)
 }
 \arguments{
-\item{cal_df}{Data frame of calibration samples, typically produced by
-\code{\link[=generate_calibration_data]{generate_calibration_data()}}. Must contain column \code{pi0} and the
-specified features.}
+\item{cal_df}{A data.frame containing at least:
+\itemize{
+\item a column named \code{"pi0"} with the true simulation π₀,
+\item feature columns named in \code{feature_names}.
+}}
 
-\item{feature_names}{Character vector giving the names of features in
-\code{cal_df} to be considered as predictors.}
+\item{feature_names}{Character vector naming the predictor columns from
+\code{cal_df} to use in the model. Default \code{"auto"} allows for automatic selection of stable features.}
 
-\item{tau}{Numeric in \eqn{[0,1]}, the quantile level to model (e.g. 0.8).}
+\item{tau}{Numeric scalar in \eqn{(0,1)}; the quantile level to be
+estimated. Defaults to \code{0.8}, following conformal upper-bound practice.}
 
-\item{model}{Character string, either \code{"qr"} for linear quantile
-regression or \code{"qrf"} for quantile regression forests.}
+\item{model}{Character string, \code{"qr"} (default) for quantile regression
+or \code{"qrf"} for quantile regression forest. If \code{"qr"} fails, the function
+will attempt a fallback to \code{"qrf"} (if available), and otherwise to \code{lm()}.}
 }
 \value{
-A list describing the fitted model, with at least the elements
-\code{type} (one of \code{"qr"}, \code{"qrf"}, \code{"lm"}),
-\code{feature_names}, and model-specific components.
+A list describing the fitted model, containing:
+\describe{
+\item{type}{One of \code{"qr"}, \code{"qrf"}, or \code{"lm"}.}
+\item{feature_names}{Character vector of features actually used.}
+\item{tau}{The quantile level used.}
+
+\item{rqfit}{(for \code{"qr"}) fitted \code{quantreg::rq} object.}
+\item{mu}{(for \code{"qr"}) column means used for scaling.}
+\item{sd}{(for \code{"qr"}) column standard deviations used for scaling.}
+\item{vars}{(for \code{"qr"}) names of standardized predictor columns.}
+
+\item{qrf}{(for \code{"qrf"}) fitted \code{quantregForest} model.}
+
+\item{lmfit}{(fallback) linear regression fit if both QR and QRF are unavailable.}
+}
 }
 \description{
-Fits a conditional quantile model for \code{pi0} given features, using
-linear quantile regression (via \pkg{quantreg}) when available, and
-falling back to quantile regression forests (\pkg{quantregForest})
-or an ordinary linear model.
+Fits a model predicting the null proportion \eqn{\pi_0} from calibration
+features, using either:
+\itemize{
+\item \strong{quantile regression} via the \code{quantreg} package (\code{model = "qr"})
+\item \strong{quantile regression forest} via the \code{quantregForest} package (\code{model = "qrf"})
 }
-\details{
-This function assumes that \code{cal_df} contains a column named
-\code{pi0} and the specified \code{feature_names}. It performs basic
-preprocessing (dropping constant columns, QR-based column selection,
-and standardisation for linear quantile regression).
+
+The function automatically:
+\itemize{
+\item keeps only available feature columns,
+\item removes rows with missing values,
+\item removes near-zero-variance predictors,
+\item enforces full column rank (QR pivoting),
+\item standardizes predictors when using quantile regression,
+\item falls back to quantile forests or linear regression if needed.
+}
+
+This model is later used inside \code{\link[=adaptive_fdr]{adaptive_fdr()}} to produce conformal
+upper bounds for \eqn{\pi_0}.
 }

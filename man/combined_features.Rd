@@ -2,20 +2,23 @@
 % Please edit documentation in R/bum.R
 \name{combined_features}
 \alias{combined_features}
-\title{Combined ECDF and BUM-based features}
+\title{Combined ECDF + optional BUM features}
 \usage{
-combined_features(pvals, lambda = 0.5)
+combined_features(pvals, lambda = 0.5, compute_stability = TRUE)
 }
 \arguments{
 \item{pvals}{Numeric vector of p-values.}
 
-\item{lambda}{Threshold used in some BUM-based features.}
+\item{lambda}{Threshold for BUM feature x4.}
+
+\item{compute_stability}{Whether to compute expensive stability features.}
 }
 \value{
 A named list of features.
 }
 \description{
-Computes ECDF-based features and, when the BUM fit converges, additional
-mixture-model-based features. If the BUM fit fails, only ECDF features
+Extracts ECDF features and (optionally) appends BUM features.
+
+BUM is fitted only if it converges; otherwise, only ECDF features
 are returned.
 }
