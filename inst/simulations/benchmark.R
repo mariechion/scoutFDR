@@ -1,46 +1,37 @@
-## run_simulations.R
-## Run full simulation study for scoutFDR paper
 
-#library(scoutFDR)
-#library(future.apply)
+library(scoutFDR)
 
-## ------------------------------------------------------------------
-## 0. Load calibration objects
-## ------------------------------------------------------------------
+## --------------------------- ##
+##  Load calibration objects   ##
+## --------------------------- ##
 
 cal_df  <- readRDS("inst/calibration/cal_df.rds")
 cqr_fit <- readRDS("inst/calibration/cqr_fit.rds")
 
 feature_names <- cqr_fit$feature_names
-
-## Optional: small sanity check
 stopifnot(all(feature_names %in% colnames(cal_df)))
 
-## ------------------------------------------------------------------
-## 1. Simulation design
-## ------------------------------------------------------------------
+## ------------------ ##
+## Simulation design  ##
+## ------------------ ##
 
 alpha_grid  <- c(0.01, 0.05, 0.10)
-pi0_grid    <- c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
-power_grid  <- c(0.25, 0.35, 0.50, 0.65)
-m_grid      <- c(2000, 5000, 10000)
-n_grid      <- c(3, 5, 10)
+pi0_grid <- c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+power_grid <- c(0.25, 0.35, 0.50, 0.65)
+m_grid <- c(2000, 5000, 10000)
+n_grid <- c(3, 5, 10)
 
-n_rep <- 10  # adjust if you want a lighter run first
+n_rep <- 100 
 
 set.seed(17)
 
 sim_grid <- expand.grid(
-  pi0          = pi0_grid,
+  pi0 = pi0_grid,
   target_power = power_grid,
-  m            = m_grid,
-  n            = n_grid,
+  m = m_grid,
+  n = n_grid,
   stringsAsFactors = FALSE
 )
-
-## ------------------------------------------------------------------
-## 2. Effect size lookup (same for all scenarios)
-## ------------------------------------------------------------------
 
 effect_grid <- scoutFDR:::build_effect_grid(
   power_grid = power_grid,
@@ -49,9 +40,9 @@ effect_grid <- scoutFDR:::build_effect_grid(
   sd_ratio   = 0.3
 )
 
-## ------------------------------------------------------------------
-## 3. One-scenario runner
-## ------------------------------------------------------------------
+## ---------------------- ##
+## One-scenario function  ##
+## ---------------------- ##
 
 run_one_scenario <- function(s_id) {
   row <- sim_grid[s_id, ]
@@ -69,7 +60,7 @@ run_one_scenario <- function(s_id) {
     ", n=", n_s
   )
 
-  # Scenario-specific seed for reproducibility (still compatible with future.seed=TRUE)
+  # Scenario-specific seed
   set.seed(1000 + s_id)
 
   res_list <- vector(
@@ -118,9 +109,9 @@ run_one_scenario <- function(s_id) {
   do.call(rbind, res_list)
 }
 
-## ------------------------------------------------------------------
-## 4. Parallel execution with future.apply
-## ------------------------------------------------------------------
+## -------------------------- ##
+## Interate on all scenarios  ##
+## -------------------------- ##
 
 scenario_ids <- seq_len(nrow(sim_grid))
 start_time <- Sys.time()
@@ -128,12 +119,12 @@ res_list <- lapply(scenario_ids, run_one_scenario)
 end_time <- Sys.time()
 message("Total simulation time: ", as.numeric(end_time - start_time), " ", attr(end_time - start_time, "units"))
 
-## ------------------------------------------------------------------
-## 5. Save combined results
-## ------------------------------------------------------------------
+## ---------------------- ##
+## Save combined results  ##
+## ---------------------- ##
 
-# Bind all results into one big data.frame
-sim_results <- do.call(rbind, res_list)
-saveRDS(sim_results, "inst/simulations/sim_results.rds")
+# Bind all results into one big data.frames
+res_benchmark <- do.call(rbind, res_list)
+saveRDS(res_benchmark, "inst/simulations/res_benchmark.rds")
 
-message("Saved combined results to inst/simulations/sim_results.rds")
+message("Saved combined results to inst/simulations/res_benchmark.rds")
