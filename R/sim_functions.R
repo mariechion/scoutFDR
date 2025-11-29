@@ -105,70 +105,72 @@ simulate_pvalues_ttest <- function(pi0, target_power, m, n) {
   sample(p)
 }
 
+#' Simulate one dataset for a given (pi0, target_power, m, n) scenario.
+#'
+#' @param pi0 True proportion of nulls
+#' @param target_power Target *average* power used for calibration
+#' @param m Total number of hypotheses
+#' @param n Sample size per group
+#' @param effect_grid Output of build_effect_grid()
+#'
+#' @returns A list with:
+#'   - pvals   - numeric vector of p-values (length m)
+#'   - tstats  - numeric vector of t-statistics (length m)
+#'   - is_null - logical vector of length m, TRUE if hypothesis is null
+#'
+#' @export
 simulate_dataset <- function(pi0, target_power, m, n, effect_grid) {
-  # Determine null / non-null split
-  m0 <- round(m * pi0)
+  # look up mu_delta, sigma_delta for this (target_power, n)
+  idx <- which(effect_grid$target_power == target_power &
+               effect_grid$n == n)
+  if (length(idx) != 1L) {
+    stop("Could not uniquely match (target_power, n) in effect_grid.")
+  }
+  mu_delta <- effect_grid$mu_delta[idx]
+  sd_delta <- effect_grid$sigma_delta[idx]
+
+  # Null / non-null labels
+  m0 <- round(pi0 * m)
   m1 <- m - m0
-
-  # Extract effect size parameters from effect_grid
-  idx <- which(effect_grid$n == n & effect_grid$target_power == target_power)
-  if (length(idx) != 1L)
-    stop("Effect grid does not contain unique match for (n, target_power).")
-
-  delta_mean <- effect_grid$delta_mean[idx]
-  delta_sd   <- effect_grid$delta_sd[idx]
-
-  # Generate NULL test statistics
-  if (m0 > 0) {
-    X1_0 <- matrix(stats::rnorm(m0 * n, 0, 1), nrow = m0)
-    X2_0 <- matrix(stats::rnorm(m0 * n, 0, 1), nrow = m0)
-
-    mean_diff_0 <- matrixStats::rowMeans2(X1_0) - matrixStats::rowMeans2(X2_0)
-    var1_0 <- matrixStats::rowVars(X1_0)
-    var2_0 <- matrixStats::rowVars(X2_0)
-
-    pooled_sd_0 <- sqrt(((n - 1) * var1_0 + (n - 1) * var2_0) / (2*n - 2))
-    tstat_0 <- mean_diff_0 / (pooled_sd_0 * sqrt(2/n))
-
-    p0 <- 2 * (1 - stats::pt(abs(tstat_0), df = 2*n - 2))
-  } else {
-    tstat_0 <- numeric(0)
-    p0 <- numeric(0)
-  }
-
-  # Generate NON-NULL test statistics
-  if (m1 > 0) {
-    delta_vec <- stats::rnorm(m1, delta_mean, delta_sd)
-
-    X1_1 <- matrix(stats::rnorm(m1 * n, 0, 1), nrow = m1)
-    X2_1 <- matrix(stats::rnorm(m1 * n, delta_vec, 1), nrow = m1)
-
-    mean_diff_1 <- matrixStats::rowMeans2(X1_1) - matrixStats::rowMeans2(X2_1)
-    var1_1 <- matrixStats::rowVars(X1_1)
-    var2_1 <- matrixStats::rowVars(X2_1)
-
-    pooled_sd_1 <- sqrt(((n - 1) * var1_1 + (n - 1) * var2_1) / (2*n - 2))
-    tstat_1 <- mean_diff_1 / (pooled_sd_1 * sqrt(2/n))
-
-    p1 <- 2 * (1 - stats::pt(abs(tstat_1), df = 2*n - 2))
-  } else {
-    tstat_1 <- numeric(0)
-    p1 <- numeric(0)
-  }
-
-  # Combine results
-  tstats <- c(tstat_0, tstat_1)
-  pvals  <- c(p0, p1)
   is_null <- c(rep(TRUE, m0), rep(FALSE, m1))
+  is_null <- sample(is_null)  # shuffle
 
-  # Shuffle to avoid ordering artifacts
-  perm <- sample.int(m)
+  # Effect sizes
+  deltas <- numeric(m)
+  if (m1 > 0L) {
+    deltas[!is_null] <- rnorm(m1, mean = mu_delta, sd = sd_delta)
+  }
+
+  # Generate data matrices: rows = hypotheses, cols = samples
+  X1 <- matrix(rnorm(m * n, mean = 0, sd = 1), nrow = m, ncol = n)
+  X2 <- matrix(rnorm(m * n, mean = 0, sd = 1), nrow = m, ncol = n) +
+    matrix(deltas, nrow = m, ncol = n)
+
+  # Row-wise means
+  mean1 <- rowMeans(X1)
+  mean2 <- rowMeans(X2)
+
+  # Unbiased sample variances (df = n - 1)
+  s1_sq <- rowSums((X1 - mean1)^2) / (n - 1)
+  s2_sq <- rowSums((X2 - mean2)^2) / (n - 1)
+
+  # Pooled variance and t-stats (equal variances)
+  df <- 2 * n - 2
+  sp_sq <- ((n - 1) * s1_sq + (n - 1) * s2_sq) / df
+  se <- sqrt(sp_sq * (2 / n))
+  tstats <- (mean1 - mean2) / se
+
+  # Two-sided p-values from t-distribution
+  pvals <- 2 * stats::pt(abs(tstats), df = df, lower.tail = FALSE)
+
   list(
-    pvals   = pvals[perm],
-    tstats  = tstats[perm],
-    is_null = is_null[perm]
+    pvals   = pvals,
+    tstats  = tstats,
+    is_null = is_null
   )
 }
+
+
 
 
 #' Run multiple FDR estimators on a vector of p-values

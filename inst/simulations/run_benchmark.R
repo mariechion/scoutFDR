@@ -21,7 +21,7 @@ power_grid <- c(0.25, 0.35, 0.50, 0.65)
 m_grid <- c(2000, 5000, 10000)
 n_grid <- c(3, 5, 10)
 
-n_rep <- 100 
+n_rep <- 100 # number of replicates per scenario
 
 set.seed(17)
 
@@ -128,3 +128,42 @@ res_benchmark <- do.call(rbind, res_list)
 saveRDS(res_benchmark, "inst/simulations/res_benchmark.rds")
 
 message("Saved combined results to inst/simulations/res_benchmark.rds")
+
+#Analyse the results of the benchmark simulation
+res_benchmark <- readRDS("inst/simulations/res_benchmark.rds")
+library(dplyr)
+summary_df <- res_benchmark %>%
+  group_by(method, pi0_true, power_target, m, n, alpha) %>%
+  summarize(
+    avg_fdr = mean(FDR),
+    avg_power = mean(power),
+    avg_discoveries = mean(discoveries),
+    avg_pi0_hat = mean(pi0_hat),
+    .groups = 'drop'
+  )
+saveRDS(summary_df, "inst/simulations/res_benchmark_summary.rds")
+message("Saved summary results to inst/simulations/res_benchmark_summary.rds")
+
+# Make plots summarizing the benchmark results
+library(ggplot2)
+library(tidyr)
+summary_df <- readRDS("inst/simulations/res_benchmark_summary.rds")
+# Example plot: boxplot of average FDR by method,true pi0 and alpha level
+fdr_plot <- ggplot(summary_df, aes(x = method, y = avg_fdr, fill = method)) +
+  geom_boxplot() +
+  facet_grid(pi0_true ~ alpha, labeller = labeller(
+    pi0_true = function(x) paste("True π0 =", x),
+    alpha = function(x) paste("FDR target α =", x)
+  ), scales = "free_y") +
+  geom_hline(data = unique(summary_df[c("alpha")]), 
+           aes(yintercept = alpha),
+           linetype = "dashed", color = "red") +
+  theme_bw() +
+  theme(legend.position = "none",
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "Average FDR across simulation scenarios",
+       x = "Method",
+       y = "Average FDR")
+ggsave("inst/simulations/fdr_plot.png", plot = fdr_plot, width = 10, height = 12)
+message("Saved average FDR plot to inst/simulations/fdr_plot.png")
+
